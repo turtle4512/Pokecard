@@ -9,3 +9,4 @@ build/
 price_report_*.txt
 price_report_*.csv
 .claude/
+.env
