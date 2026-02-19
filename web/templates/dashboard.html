@@ -5,21 +5,21 @@
 <div class="card">
     <h2>爬取控制</h2>
     <div class="btn-group">
-        <form method="post" action="{{ url_for('main.scrape') }}" style="display:inline">
+        <form method="post" action="{{ url_for('main.scrape') }}">
             <input type="hidden" name="mode" value="both">
-            <button class="btn btn-primary" type="submit" {{ 'disabled' if state.status == 'running' }}>
+            <button class="btn btn-primary" type="submit" {% if state.status == 'running' %}disabled{% endif %}>
                 両方爬取
             </button>
         </form>
-        <form method="post" action="{{ url_for('main.scrape') }}" style="display:inline">
+        <form method="post" action="{{ url_for('main.scrape') }}">
             <input type="hidden" name="mode" value="fastbuy">
-            <button class="btn btn-warning" type="submit" {{ 'disabled' if state.status == 'running' }}>
+            <button class="btn btn-warning" type="submit" {% if state.status == 'running' %}disabled{% endif %}>
                 Fastbuy のみ
             </button>
         </form>
-        <form method="post" action="{{ url_for('main.scrape') }}" style="display:inline">
+        <form method="post" action="{{ url_for('main.scrape') }}">
             <input type="hidden" name="mode" value="onechome">
-            <button class="btn btn-success" type="submit" {{ 'disabled' if state.status == 'running' }}>
+            <button class="btn btn-success" type="submit" {% if state.status == 'running' %}disabled{% endif %}>
                 1-chome のみ
             </button>
         </form>
@@ -98,35 +98,47 @@
         var btns = document.querySelectorAll('.btn');
         btns.forEach(function(b) { b.disabled = true; });
 
-        var source = new EventSource('/api/progress');
-        source.onmessage = function(e) {
-            var data = JSON.parse(e.data);
-            bar.style.width = data.progress + '%';
-            bar.textContent = data.progress + '%';
-            phase.textContent = data.phase;
+        var retryCount = 0;
+        var maxRetries = 5;
 
-            if (data.logs && data.logs.length > 0) {
-                data.logs.forEach(function(line) {
-                    logArea.textContent += line + '\n';
-                });
-                logArea.scrollTop = logArea.scrollHeight;
-            }
-
-            if (data.status === 'completed') {
-                source.close();
-                window.location.href = '/results';
-            } else if (data.status === 'error') {
-                source.close();
+        function startStream() {
+            var source = new EventSource('/api/progress');
+            source.onmessage = function(e) {
+                retryCount = 0;
+                var data = JSON.parse(e.data);
+                bar.style.width = data.progress + '%';
+                bar.textContent = data.progress + '%';
                 phase.textContent = data.phase;
-                phase.classList.add('error-text');
-                btns.forEach(function(b) { b.disabled = false; });
-            }
-        };
 
-        source.onerror = function() {
-            source.close();
-            btns.forEach(function(b) { b.disabled = false; });
-        };
+                if (data.logs && data.logs.length > 0) {
+                    var chunk = data.logs.join('\n') + '\n';
+                    logArea.textContent += chunk;
+                    logArea.scrollTop = logArea.scrollHeight;
+                }
+
+                if (data.status === 'completed') {
+                    source.close();
+                    window.location.href = '/results';
+                } else if (data.status === 'error') {
+                    source.close();
+                    phase.textContent = data.phase;
+                    phase.classList.add('error-text');
+                    btns.forEach(function(b) { b.disabled = false; });
+                }
+            };
+
+            source.onerror = function() {
+                source.close();
+                if (retryCount < maxRetries) {
+                    retryCount++;
+                    setTimeout(startStream, retryCount * 2000);
+                } else {
+                    btns.forEach(function(b) { b.disabled = false; });
+                }
+            };
+        }
+
+        startStream();
     }
 })();
 </script>
