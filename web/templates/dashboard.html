@@ -1,0 +1,133 @@
+{% extends "base.html" %}
+{% block title %}ダッシュボード — PokeCard 買取{% endblock %}
+
+{% block content %}
+<div class="card">
+    <h2>爬取控制</h2>
+    <div class="btn-group">
+        <form method="post" action="{{ url_for('main.scrape') }}" style="display:inline">
+            <input type="hidden" name="mode" value="both">
+            <button class="btn btn-primary" type="submit" {{ 'disabled' if state.status == 'running' }}>
+                両方爬取
+            </button>
+        </form>
+        <form method="post" action="{{ url_for('main.scrape') }}" style="display:inline">
+            <input type="hidden" name="mode" value="fastbuy">
+            <button class="btn btn-warning" type="submit" {{ 'disabled' if state.status == 'running' }}>
+                Fastbuy のみ
+            </button>
+        </form>
+        <form method="post" action="{{ url_for('main.scrape') }}" style="display:inline">
+            <input type="hidden" name="mode" value="onechome">
+            <button class="btn btn-success" type="submit" {{ 'disabled' if state.status == 'running' }}>
+                1-chome のみ
+            </button>
+        </form>
+    </div>
+
+    {% if state.status == 'completed' and state.completed_at %}
+    <p class="last-run">前回実行: {{ state.completed_at.strftime('%Y-%m-%d %H:%M:%S') }}
+        — <a href="{{ url_for('main.results') }}">結果を表示</a>
+    </p>
+    {% endif %}
+</div>
+
+<!-- Progress panel -->
+<div id="progress-panel" class="card" style="display:{{ 'block' if state.status == 'running' else 'none' }}" data-status="{{ state.status }}">
+    <h2>進行状況</h2>
+    <p id="phase-text">{{ state.phase }}</p>
+    <div class="progress-container">
+        <div id="progress-bar" class="progress-bar" style="width:{{ (state.progress * 100)|round(1) }}%">
+            {{ (state.progress * 100)|round(1) }}%
+        </div>
+    </div>
+    <div id="log-area" class="log-area">{% for line in state.log_lines %}{{ line }}
+{% endfor %}</div>
+</div>
+
+{% if state.status == 'error' %}
+<div class="card error-card">
+    <h2>エラー</h2>
+    <p>{{ state.error_message }}</p>
+</div>
+{% endif %}
+
+<!-- Collection table -->
+<div class="card">
+    <h2>コレクション一覧（{{ items|length }} 件）</h2>
+    <table>
+        <thead>
+            <tr>
+                <th>#</th>
+                <th>商品名</th>
+                <th>系列</th>
+                <th>数量</th>
+                <th>種類</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for item in items %}
+            <tr>
+                <td>{{ item.id }}</td>
+                <td>{{ item.name_jp }}</td>
+                <td>{{ item.series }}</td>
+                <td>{{ item.quantity }}</td>
+                <td>{{ item.product_type.value }}</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+(function() {
+    var panel = document.getElementById('progress-panel');
+    var statusAttr = panel ? panel.dataset.status : '';
+
+    if (statusAttr === 'running') {
+        connectSSE();
+    }
+
+    function connectSSE() {
+        panel.style.display = 'block';
+        var bar = document.getElementById('progress-bar');
+        var phase = document.getElementById('phase-text');
+        var logArea = document.getElementById('log-area');
+        var btns = document.querySelectorAll('.btn');
+        btns.forEach(function(b) { b.disabled = true; });
+
+        var source = new EventSource('/api/progress');
+        source.onmessage = function(e) {
+            var data = JSON.parse(e.data);
+            bar.style.width = data.progress + '%';
+            bar.textContent = data.progress + '%';
+            phase.textContent = data.phase;
+
+            if (data.logs && data.logs.length > 0) {
+                data.logs.forEach(function(line) {
+                    logArea.textContent += line + '\n';
+                });
+                logArea.scrollTop = logArea.scrollHeight;
+            }
+
+            if (data.status === 'completed') {
+                source.close();
+                window.location.href = '/results';
+            } else if (data.status === 'error') {
+                source.close();
+                phase.textContent = data.phase;
+                phase.classList.add('error-text');
+                btns.forEach(function(b) { b.disabled = false; });
+            }
+        };
+
+        source.onerror = function() {
+            source.close();
+            btns.forEach(function(b) { b.disabled = false; });
+        };
+    }
+})();
+</script>
+{% endblock %}

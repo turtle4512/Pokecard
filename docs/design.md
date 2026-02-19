@@ -1,6 +1,6 @@
 # ポケモンカード買取価格爬虫系统
 
-**技術設計書 v3.2（実測検証版）**
+**技術設計書 v4.0（実装完了版）**
 
 対象サイト: fastbuy.jp × 買取一丁目 (1-chome.com)
 
@@ -64,11 +64,20 @@ https://fastbuy.jp/index.php/index/index/goodsdetail?id={product_id}
 |----------|-----------|----------|
 | 商品卡片 | `a[href*='goodsdetail']` 包裹整个卡片 | 选择所有含 goodsdetail 的链接 |
 | 商品名称 | 图片后的长文本节点 | 过滤掉短文本(強化/色选择)后取第一个长文本 |
-| 价格格式 | 两种: `¥X,XXX` 或 `X,XXX ~ Y,YYY円` | 正则: `[￥¥]?(\d+,?\d+)(\s*[~～]\s*(\d+,?\d+))?` |
+| 价格格式 | 两种: `¥X,XXX` 或 `X,XXX ~ Y,YYY円` | 正则: 4组交替匹配（¥前缀 OR 円后缀），见下方 |
 | 买取强化标记 | 文本中包含「強化」 | 检查卡片文本中是否含「強」 |
 | 颜色变体 | 黒/金/白/灰 四种选择 | 区间价对应不同颜色变体 |
 | 分页控件 | `a[href*='page=N']` 链接 | 检查是否存在 page=N+1 链接 |
-| 每页商品数 | 约12个 | 7页 ≈ 84个商品 |
+| 每页商品数 | 约12个 | 7页 ≈ 76个商品（实测） |
+
+**价格正则（实装版）:**
+
+商品名中含有裸数字（如「151」）会导致误匹配，因此正则必须要求 `¥/￥` 前缀 **或** `円` 后缀：
+
+```python
+# 4组交替: (¥low, ¥high) | (円low, 円high)
+FASTBUY_PRICE_PATTERN = r"(?:[￥¥]\s*(\d{1,3}(?:,\d{3})*)\s*(?:[~～]\s*(\d{1,3}(?:,\d{3})*))?|(\d{1,3}(?:,\d{3})*)\s*(?:[~～]\s*(\d{1,3}(?:,\d{3})*))?\s*円)"
+```
 
 **实测第1页商品样本（与你的收藏相关的商品）:**
 
@@ -86,9 +95,9 @@ https://fastbuy.jp/index.php/index/index/goodsdetail?id={product_id}
 
 > **关键发现:** 1-chome.com 确实有宝可梦卡牌 BOX 买取。使用关键词「ポケモン」搜索后，出现了ポケモンカード相关商品。无需登录即可搜索和查看价格。
 
-**渲染方式:** SPA 单页应用。HTTP 直接请求只返回空壳 HTML（仅含 `<title>買取一丁目</title>`），全部商品数据通过 JavaScript 异步加载，必须通过浏览器或 API 拦截获取。
+**渲染方式:** SPA 单页应用（**Element Plus / Vue.js** 框架，Playwright DOM 检查で確認済み）。HTTP 直接请求只返回空壳 HTML，全部商品数据通过 JavaScript 异步加载，必须通过 Playwright 浏览器自动化获取。
 
-**登录要求:** 不需要登录。直接搜索关键词「ポケモン」即可出现卡牌 BOX 的商品和价格信息。爬虫无需处理认证逻辑。
+**登录要求:** 不需要登录。直接搜索关键词即可出现卡牌 BOX 的商品和价格信息。爬虫无需处理认证逻辑。
 
 **截图分析 — 搜索结果页结构:**
 
@@ -105,35 +114,23 @@ https://fastbuy.jp/index.php/index/index/goodsdetail?id={product_id}
 | 登录状态 | 需要登录（截图显示 WU...様 已登录） |
 | 已确认的卡牌商品 | ロケット団の栄光 BOX / 熱風のアリーナ BOX / ポケなで モンスターボール 等 |
 
-**技术方案选择（无需登录，方案简化）:**
+**已采用方案: Playwright 直接搜索**
 
-|  | 方案A: Playwright 直接搜索（推荐） | 方案B: API 拦截（更快） |
-|--|-----------------------------------|-----------------------|
-| 原理 | Playwright 打开首页 → 搜索 → 解析 | F12找到搜索API，直接httpx调用 |
-| 速度 | 较慢（~5秒/次搜索） | 快（~0.5秒/次） |
-| 稳定性 | 中高（模拟真实浏览器） | 高（直接调用API） |
-| 登录处理 | 不需要 | 不需要 |
-| 18件商品耗时 | 约 5-10 分钟 | 约 1 分钟 |
-| 开发难度 | ★★☆☆☆ 较简单 | ★★★☆☆ 中等（需分析API） |
-
-> **开发前待办:**
-> - 用 F12 → Network 面板观察搜索请求，确认 API 端点 URL 和返回 JSON 格式
-> - 确认搜索「ポケモン」时 API 返回的商品列表结构和分页机制
+实测 18 件商品搜索耗时约 2.5 分钟（含 3-6 秒随机间隔）。
 
 ### 2.3 双站点实测对比总结
 
-| 对比项 | fastbuy.jp (已验证) | 1-chome.com (已确认有卡牌) |
-|--------|--------------------|-----------------------------|
-| 渲染方式 | SSR — HTML含完整数据 | SPA — 需JS渲染或API拦截 |
-| 爬取方案 | httpx + BeautifulSoup | Playwright(搜索) / API+Cookie |
-| 搜索机制 | 分类浏览(id=8) + 翻页 | 关键词搜索 → /searchResult |
-| URL规则 | 完全确认 | 需F12分析API |
+| 对比项 | fastbuy.jp | 1-chome.com |
+|--------|------------|-------------|
+| 渲染方式 | SSR — HTML含完整数据 | SPA — Element Plus / Vue.js |
+| 爬取方案 | httpx + BeautifulSoup | Playwright 浏览器自动化 |
+| 搜索机制 | 分类浏览(id=8) + 翻页 7页 | 逐关键词搜索 |
 | 商品名格式 | 完整日文名（长名称） | 【系列】简称 BOX |
-| 价格格式 | `¥X,XXX` 或 `X,XXX~Y,YYY円` | `新品 ¥X,XXX`（单一买取价） |
-| 登录要求 | 不需要登录 | 不需要登录（直接搜索即可） |
-| JAN码 | 无 | 有（可用于精确匹配） |
-| 开发难度 | ★☆☆☆☆ 简单 | ★★★☆☆ 中等 |
-| 搜索语言 | 日本語（商品原名） | 日本語（如「ポケモン」） |
+| 价格格式 | `¥X,XXX` 或 `X,XXX~Y,YYY円` | `¥X,XXX`（单一买取价） |
+| 登录要求 | 不需要 | 不需要 |
+| JAN码 | 无 | 有（13桁、テキスト中に `JAN: XXXXXXXXXXXXX`） |
+| 实测耗时 | ~22 秒（7页爬取） | ~2.5 分钟（18件搜索） |
+| 搜索语言 | 日本語（商品原名） | 日本語 |
 
 ---
 
@@ -223,26 +220,34 @@ Step 6: 若未命中，尝试下一组关键词（最多3组）
 Step 7: 搜索间隔 3-6秒，18件商品约需 5-10 分钟
 ```
 
-**DOM 解析参考（基于截图推断的选择器）:**
+**DOM 选择器（Playwright 実機確認済み）:**
 
-```css
-/* 商品卡片（推断，需 F12 验证） */
-product_card: ".product-card, .goods-item, [class*='product']"
+```python
+# Element Plus / Vue.js — 已通过 Playwright DOM 检查确认
+ONECHOME_SELECTORS = {
+    "search_input": "input.el-input__inner[placeholder*='商品名']",
+    "search_button": "button.search-btn",
+    "product_card": ".commodity-item",
+    "product_name": ".commodity-content .title",
+}
+```
 
-/* 商品名（含系列前缀） */
-product_name: ".product-name, .goods-title"
-/* 示例: "【S&V】ロケット団の栄光 BOX" */
+**商品卡片 inner_text 结构（実測）:**
 
-/* JAN码 */
-jan_code: "text containing 'JAN:' + following text"
-/* 示例: "JAN: 4902370551563" */
+```
+【S＆V】クレイバースト BOX        ← 商品名（第一行含【前缀】）
+JAN: 4521329346182               ← JAN码（13桁）
+ポケモンカード                    ← 分类
+※シュリンク付き、新品未開封        ← 备注
+新品                              ← 状态
+¥11,000                          ← 买取价格
+カートに入れる                    ← 按钮文本
+```
 
-/* 价格 */
-price: "text containing '¥' near '新品'"
-/* 示例: "新品  ¥6,500" */
+**价格正则:**
 
-/* 购物车按钮 */
-cart_btn: "button containing 'カートに入れる'"
+```python
+ONECHOME_PRICE_PATTERN = r"[￥¥]\s*(\d{1,3}(?:,\d{3})*)"
 ```
 
 ### 3.4 模糊匹配算法
@@ -252,82 +257,135 @@ cart_btn: "button containing 'カートに入れる'"
 1. **子串包含检查:** 关键词是否完整出现在商品名中 → 分数 0.95
 2. **反向包含检查:** 商品名是否完整出现在关键词中 → 分数 0.90
 3. **SequenceMatcher 序列相似度** → 分数 0-1
-4. **关键词命中率:** 将两者分词后计算交集比例 → 分数 0-1
+4. **关键词命中率:** 将两者分词后计算交集比例 → 分数 0-1（**含 stopword 过滤**）
 5. 取以上最高分作为最终匹配度，阈值设为 **0.5**
+
+**正规化处理:** 比較前に lowercase、全角→半角（＆→&, ～→~）、空白圧縮を実施。
+
+**Stopword 过滤（Level 4 分词匹配时使用）:**
+
+「BOX」「ボックス」「パック」「セット」「拡張」「強化」「ポケモンカードゲーム」「ポケモンカード」「ポケモン」「スカーレット」「バイオレット」「ソード」「シールド」「拡張パック」「ハイクラスパック」「強化拡張パック」「ex」「mega」
+
+> **実装時の教訓:** Stopword 未導入時、「タイムゲイザー BOX」が「BOX」トークン一致だけで全く別の商品にスコア 0.50 で誤マッチしていた。Stopword フィルタリング追加で解消。
 
 ---
 
 ## 4. 数据模型
 
-### 4.1 products 表
+> **実装注記:** 初版は SQLite を使わず、Python dataclass でインメモリ処理。将来の価格履歴追跡に向けて SQLite 追加を検討中。
 
-| 字段 | 类型 | 约束 | 说明 |
-|------|------|------|------|
-| id | INTEGER | PK | 自增主键 |
-| name_jp | VARCHAR(500) | NOT NULL | 日語商品名（网站原文） |
-| name_cn | VARCHAR(500) | | 中文商品名（你的备注） |
-| site | VARCHAR(50) | NOT NULL | fastbuy / 1chome |
-| product_url | TEXT | | 商品详情页URL |
-| site_product_id | VARCHAR(100) | | 站内商品ID |
-| series | VARCHAR(20) | | 系列号(sv6, s12a等) |
-| category | VARCHAR(100) | | 商品类别(BOX/セット) |
-| has_variants | BOOLEAN | DEFAULT FALSE | 是否有颜色变体 |
-| created_at | DATETIME | DEFAULT NOW | 首次抓取时间 |
-| updated_at | DATETIME | ON UPDATE | 最后更新时间 |
+### 4.1 核心数据类 (`models/data.py`)
 
-### 4.2 price_records 表
+```python
+class ProductType(Enum):
+    BOX = "BOX"
+    SET = "SET"
 
-| 字段 | 类型 | 约束 | 说明 |
-|------|------|------|------|
-| id | INTEGER | PK | 自增主键 |
-| product_id | INTEGER | FK | 关联products表 |
-| price_low | INTEGER | NOT NULL | 买取价下限（日元） |
-| price_high | INTEGER | | 买取价上限（区间价时） |
-| variant | VARCHAR(50) | | 变体名（黒/金/白/灰） |
-| is_enhanced | BOOLEAN | DEFAULT FALSE | 是否買取強化中 |
-| match_keyword | VARCHAR(200) | | 命中的搜索关键词 |
-| match_score | FLOAT | | 匹配度分数 |
-| crawled_at | DATETIME | NOT NULL | 抓取时间戳 |
+class Site(Enum):
+    FASTBUY = "fastbuy"
+    ONECHOME = "1chome"
+
+@dataclass
+class CollectionItem:
+    id: int                          # 收藏编号 1-18
+    name_jp: str                     # 日語商品名
+    series: str                      # 系列号 (sv6, s12a 等)
+    quantity: int                    # 持有数量
+    product_type: ProductType        # BOX / SET
+    search_keywords: list[str]       # 日語搜索关键词（2-4组，按精确度排序）
+
+@dataclass
+class ScrapedProduct:
+    site: Site                       # 来源站点
+    name: str                        # 商品名（网站原文）
+    price_low: int                   # 买取价下限（日元）
+    price_high: int | None = None    # 买取价上限（区间价时）
+    product_url: str | None = None   # 商品详情页 URL
+    product_id: str | None = None    # 站内商品 ID
+    jan_code: str | None = None      # JAN 条码（1-chome 专用）
+    is_enhanced: bool = False        # 買取強化フラグ（fastbuy 专用）
+    variant: str | None = None       # 颜色变体
+    condition: str | None = None     # 新品 / 中古
+
+@dataclass
+class MatchResult:
+    collection_item: CollectionItem  # 对应的收藏品
+    product: ScrapedProduct | None   # 匹配到的商品（None=未匹配）
+    score: float                     # 匹配度 0.0-1.0
+    matched_keyword: str | None      # 命中的搜索关键词
+    site: Site                       # 来源站点
+
+@dataclass
+class ComparisonRow:
+    item: CollectionItem             # 收藏品
+    fastbuy_match: MatchResult | None
+    onechome_match: MatchResult | None
+    price_diff: int | None           # 价格差（正=1-chome高）
+    recommendation: str | None       # "fastbuy" / "1-chome" / "同じ"
+```
 
 ---
 
 ## 5. 项目结构与技术栈
 
+> **設計書からの変更点:**
+> - `parsers/` を `scrapers/` に統合（各 parser は 1 つの scraper 専用のため分離不要）
+> - YAML 設定 → Python 定数（`config/settings.py`）に変更。pyyaml 依存を排除
+> - `notifier.py` は初版スキップ（P5 機能）
+> - `models/data.py` を新設（共有データクラス）
+> - SQLite 延期 → インメモリ処理 + レポート出力
+
 ```
-kaitori_scraper/                  # 项目根目录
-├── config/                       # 配置
-│   ├── collection.py             # 你的18件收藏清单 + 日語搜索关键词
-│   ├── fastbuy.yaml              # fastbuy URL规则/选择器/分类ID
-│   └── 1chome.yaml               # 1-chome 搜索配置/API端点
-├── scrapers/                     # 爬虫核心
-│   ├── base.py                   # BaseScraper 基类
-│   ├── fastbuy_scraper.py        # SSR爬虫: httpx + BeautifulSoup
-│   └── onechome_scraper.py       # SPA爬虫: Playwright / API
-├── parsers/                      # 解析器
-│   ├── fastbuy_parser.py         # HTML解析 + 价格正则
-│   └── onechome_parser.py        # JSON/DOM 解析
-├── matcher/                      # 匹配引擎
-│   └── fuzzy_match.py            # 模糊匹配算法
-├── output/                       # 输出
-│   ├── comparator.py             # 双站价格对比
-│   ├── report.py                 # 文本/CSV/Excel 报告
-│   └── notifier.py               # Telegram/邮件通知
-├── main.py                       # 主入口（完整模式/仅fastbuy模式）
-└── requirements.txt              # httpx, bs4, lxml, playwright, pandas
+kaitori_scraper/                  # パッケージルート
+├── __init__.py
+├── __main__.py                   # python -m kaitori_scraper 対応
+├── main.py                       # CLI 入口 (argparse + asyncio)
+├── config/
+│   ├── __init__.py
+│   ├── collection.py             # 18件收藏清单 + 日語搜索关键词
+│   └── settings.py               # URL/选择器/UA池/延迟/正则 全配置
+├── models/
+│   ├── __init__.py
+│   └── data.py                   # 共享 dataclass (CollectionItem, ScrapedProduct 等)
+├── scrapers/
+│   ├── __init__.py
+│   ├── base.py                   # BaseScraper ABC (延迟/重试/UA)
+│   ├── fastbuy_scraper.py        # SSR爬虫: httpx + BeautifulSoup（含解析）
+│   └── onechome_scraper.py       # SPA爬虫: Playwright（含解析）
+├── matcher/
+│   ├── __init__.py
+│   └── fuzzy_match.py            # 4级模糊匹配 + stopword 过滤
+└── output/
+    ├── __init__.py
+    ├── comparator.py             # 双站中间价对比
+    └── report.py                 # 文本报告 + CSV (utf-8-sig)
+requirements.txt                  # httpx, beautifulsoup4, lxml, playwright
 ```
 
-**快速运行命令:**
+**运行命令:**
 
 ```bash
+# 安装依赖
+pip install -r requirements.txt
+playwright install chromium
+
 # 完整模式（两个站点）
-python main.py
+python -m kaitori_scraper.main
 
 # 仅 fastbuy（无需 Playwright）
-python main.py --fastbuy-only
+python -m kaitori_scraper.main --fastbuy-only
 
-# 指定收藏编号
-python main.py --items 5,8,14
+# 仅 1-chome
+python -m kaitori_scraper.main --onechome-only
+
+# 指定收藏编号 + 详细日志
+python -m kaitori_scraper.main --items 5,8,14 -v
+
+# Windows 环境推荐（确保 UTF-8 输出）
+python -X utf8 -m kaitori_scraper.main
 ```
+
+> **Windows 注意:** 默认使用 `ProactorEventLoop`（Playwright subprocess 需要）。不可设置 `WindowsSelectorEventLoopPolicy`。
 
 ---
 
@@ -341,82 +399,90 @@ python main.py --items 5,8,14
 | Accept-Language | 固定 `ja,en-US;q=0.9` — 模拟日本用户 |
 | Referer 链 | fastbuy: 首页→分类页→翻页 / 1-chome: 首页→搜索结果 |
 | 请求延迟 | fastbuy 翻页: 2-4秒 / 1-chome 搜索间: 3-6秒 |
-| 批次间隔 | 全部18件搜索完后休息30秒再重新开始 |
-| 异常处理 | 429/503 指数退避，连续失败3次暂停并告警 |
+| 异常处理 | 指数退避（base=2秒），最大重试3次 |
 | 代理 | 初期不需要。若IP被封，可接入自建代理 |
 
 ---
 
 ## 7. 输出报告格式
 
-爬虫执行完成后生成三种格式的报告：
+爬虫执行完成后生成两种格式的报告（文件名含时间戳 `price_report_YYYYMMDD_HHMMSS`）：
 
-### 7.1 文本报告 (price_report.txt)
+### 7.1 文本报告 (price_report_*.txt)
 
 ```
-════════════════════════════════════════════
+==================================================
   ポケモンカード 買取価格レポート
-  查询时间: 2026-02-19 15:30:00
-════════════════════════════════════════════
+  查询时间: 2026-02-20 01:16:14
+==================================================
 
-─── [8] クレイバースト BOX (sv2D) × 2 ───
+--- [8] クレイバースト BOX (sv2D) x 2 ---
 
-  fastbuy.jp:  ¥25,000 ~ ¥30,000  🔥買取強化
-    匹配商品: ポケモンカードゲーム ...クレイバースト BOX
-    匹配度: 95%  |  链接: https://fastbuy.jp/...
+  fastbuy.jp:  ¥8,000 ~ ¥11,300
+    匹配商品: ポケモンカードゲーム ...「クレイバースト」ボックス
+    匹配度: 100%  |  链接: https://fastbuy.jp/...
 
-  1-chome:     ¥28,000
-    匹配商品: クレイバースト 未開封BOX
-    匹配度: 90%
+  1-chome:     ¥11,000
+    匹配商品: 【S＆V】クレイバースト BOX
+    匹配度: 100%
 
-  📊 对比: 1-chome 高 ¥3,000（中间价比较）
+  対比: 1-chome 高 ¥1,350
 
-════════════════════════════════════════════
+==================================================
   汇总（含数量）
   fastbuy 合计: ¥XXX,XXX ~ ¥XXX,XXX
-  1-chome 合计: ¥XXX,XXX ~ ¥XXX,XXX
-════════════════════════════════════════════
+  1-chome 合计: ¥XXX,XXX
+==================================================
 ```
 
-### 7.2 CSV 报告 (price_report.csv)
+### 7.2 CSV 报告 (price_report_*.csv)
 
-包含字段: 编号、商品名(日/中)、系列、数量、fastbuy价格(上下限)、fastbuy匹配商品、1chome价格(上下限)、1chome匹配商品、价格差异等。可直接用 Excel 打开分析。
+使用 `utf-8-sig` 编码（BOM）确保 Excel 正确打开日文。包含字段: 编号、商品名、系列、数量、fastbuy 价格(上下限)、fastbuy 匹配商品、fastbuy 匹配度、1-chome 价格(上下限)、1-chome 匹配商品、1-chome 匹配度、价格差异、推荐站点。
 
 ---
 
 ## 8. 开发计划
 
-| 阶段 | 任务 | 交付物 | 工期 |
-|------|------|--------|------|
-| P1 | fastbuy 全量爬取 + 18件匹配 | fastbuy 价格报告 | 1天 |
-| P2 | 1-chome F12 分析 API 端点 | API文档 + 请求样本 | 0.5天 |
-| P3 | 1-chome 爬虫开发 | 1-chome 价格报告 | 1-2天 |
-| P4 | 双站对比 + 报告生成 | 完整对比报告 | 0.5天 |
-| P5 | 定时任务 + 告警 | 自动化运行 | 0.5天 |
-
-总工期: 约 3-4 天。建议立即开始 P1（fastbuy 已完全可行），P2 可同步进行。
+| 阶段 | 任务 | 状态 |
+|------|------|------|
+| P1 | fastbuy 全量爬取 + 18件匹配 | ✅ 完成 — 76 商品爬取、17/18 匹配成功 |
+| P2 | 1-chome Playwright DOM 分析 | ✅ 完成 — Element Plus/Vue.js 确认 |
+| P3 | 1-chome 爬虫开发 | ✅ 完成 — 11/18 匹配成功 |
+| P4 | 双站对比 + 报告生成 | ✅ 完成 — 文本 + CSV 报告 |
+| P5 | 定时任务 + 告警 | 未着手 |
 
 ---
 
-## 9. 关键待办事项
+## 9. 已知问题与改善余地
 
-**必须完成:**
+**匹配结果:**
 
-- 用浏览器 F12 分析 1-chome.com 的搜索 API（URL、参数、响应JSON格式）— 不需要登录，直接搜索「ポケモン」即可抓包
+| 商品 | fastbuy | 1-chome | 备注 |
+|------|---------|---------|------|
+| #1-10 (主流 BOX) | ✅ 100% | ✅ 100% | 完璧マッチ |
+| #11 パラダイムトリガー | ✅ 100% | ❌ | 1-chome 在庫なし |
+| #12 タイムゲイザー | ❌ | ❌ | 両站とも在庫なし |
+| #13 Pokémon GO セット | ⚠️ 50% | ❌ | fastbuy 误匹配到 GO ボックス |
+| #14 ポケモンカード151 | ✅ 100% | ✅ 100% | |
+| #15 カードファイルセット | ⚠️ 50% | ❌ | fastbuy 误匹配到 151 BOX |
+| #16 Classic | ⚠️ 51% | ❌ | fastbuy 误匹配到 MEGA 拡張パック |
+| #17 ジムセット | ⚠️ 50% | ❌ | 名称に近いが完全一致ではない |
+| #18 スターターセット | ⚠️ 50% | ❌ | fastbuy 误匹配到 WCS ピカチュウ |
 
-**建议确认:**
+**潜在改善:**
 
-- fastbuy 第2-7页是否包含你的全部收藏（第1页主要是最新MEGA系列）
-- 是否需要爬取商品详情页获取各颜色变体的单独价格
-- 1-chome 的价格是「新品」标注，是否同时有「中古」价格需要抓取？
-- 对于6盒 VSTARユニバース，两个店是否有批量买取加成/减额
-- 运行环境确认：本地运行 or 服务器？是否可直连日本网站？
+- 提高匹配阈值或为低置信度匹配添加警告标记
+- 为 #13, #15-18 等特殊商品添加更精确的搜索关键词
+- 考虑 JAN 码精确匹配（1-chome 有 JAN 数据）
+- SQLite 持久化，实现价格推移追跡
+- 定时执行 + 价格变动通知（P5）
 
 ---
 
-| 文档版本 | v3.2（基于实际测试修订） |
+| 文档版本 | v4.0（実装完了版） |
 |---------|----------------------|
-| 更新日期 | 2026-02-19 |
+| 更新日期 | 2026-02-20 |
 | 目标站点 | fastbuy.jp / 1-chome.com |
 | 收藏品数量 | 18种 / 共约35件 |
 | 搜索语言 | 日本語優先 |
+| 技術栈 | Python 3.12 / httpx / BeautifulSoup / Playwright / asyncio |

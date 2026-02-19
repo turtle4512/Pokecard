@@ -1,0 +1,149 @@
+{% extends "base.html" %}
+{% block title %}結果 — PokeCard 買取{% endblock %}
+
+{% block content %}
+<div class="card">
+    <div class="results-header">
+        <h2>買取価格 比較結果</h2>
+        <div class="btn-group">
+            <a href="{{ url_for('main.download_csv') }}" class="btn btn-primary">CSV ダウンロード</a>
+            <a href="{{ url_for('main.download_txt') }}" class="btn btn-warning">テキスト ダウンロード</a>
+        </div>
+    </div>
+
+    {% if state.completed_at %}
+    <p class="last-run">実行日時: {{ state.completed_at.strftime('%Y-%m-%d %H:%M:%S') }}
+        | モード: {{ state.mode }}</p>
+    {% endif %}
+</div>
+
+<div class="card table-card">
+    <div class="table-scroll">
+    <table>
+        <thead>
+            <tr>
+                <th>#</th>
+                <th>商品名</th>
+                <th>系列</th>
+                <th>数量</th>
+                <th>Fastbuy 価格</th>
+                <th>Fastbuy 匹配</th>
+                <th>1-chome 価格</th>
+                <th>1-chome 匹配</th>
+                <th>差額</th>
+                <th>推奨</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for row in state.results %}
+            {% set item = row.collection_item %}
+            {% set fb = row.fastbuy_match %}
+            {% set oc = row.onechome_match %}
+            <tr>
+                <td>{{ item.id }}</td>
+                <td class="name-cell">{{ item.name_jp }}</td>
+                <td>{{ item.series }}</td>
+                <td>{{ item.quantity }}</td>
+
+                <!-- Fastbuy -->
+                <td>
+                    {% if fb and fb.product %}
+                        <span class="price">¥{{ "{:,}".format(fb.product.price_low) }}</span>
+                        {% if fb.product.price_high %}
+                            <span class="price-range">~ ¥{{ "{:,}".format(fb.product.price_high) }}</span>
+                        {% endif %}
+                        {% if fb.product.is_enhanced %}
+                            <span class="badge enhanced">強化</span>
+                        {% endif %}
+                    {% else %}
+                        <span class="no-match">--</span>
+                    {% endif %}
+                </td>
+                <td class="match-cell">
+                    {% if fb and fb.product %}
+                        <span class="match-name" title="{{ fb.product.name }}">{{ fb.product.name[:30] }}{% if fb.product.name|length > 30 %}...{% endif %}</span>
+                        <span class="badge {% if fb.score >= 0.9 %}score-high{% elif fb.score >= 0.7 %}score-mid{% else %}score-low{% endif %}">
+                            {{ "%.0f"|format(fb.score * 100) }}%
+                        </span>
+                    {% endif %}
+                </td>
+
+                <!-- 1-chome -->
+                <td>
+                    {% if oc and oc.product %}
+                        <span class="price">¥{{ "{:,}".format(oc.product.price_low) }}</span>
+                    {% else %}
+                        <span class="no-match">--</span>
+                    {% endif %}
+                </td>
+                <td class="match-cell">
+                    {% if oc and oc.product %}
+                        <span class="match-name" title="{{ oc.product.name }}">{{ oc.product.name[:30] }}{% if oc.product.name|length > 30 %}...{% endif %}</span>
+                        <span class="badge {% if oc.score >= 0.9 %}score-high{% elif oc.score >= 0.7 %}score-mid{% else %}score-low{% endif %}">
+                            {{ "%.0f"|format(oc.score * 100) }}%
+                        </span>
+                    {% endif %}
+                </td>
+
+                <!-- Diff & recommendation -->
+                <td class="{% if row.price_diff and row.price_diff > 0 %}positive{% elif row.price_diff and row.price_diff < 0 %}negative{% endif %}">
+                    {% if row.price_diff is not none %}
+                        ¥{{ "{:,}".format(row.price_diff) }}
+                    {% endif %}
+                </td>
+                <td>
+                    {% if row.recommendation %}
+                        <span class="badge {% if row.recommendation == '1-chome' %}rec-onechome{% elif row.recommendation == 'fastbuy' %}rec-fastbuy{% else %}rec-same{% endif %}">
+                            {{ row.recommendation }}
+                        </span>
+                    {% endif %}
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    </div>
+</div>
+
+<!-- Summary -->
+<div class="card">
+    <h2>合計（数量込み）</h2>
+    {% set ns = namespace(fb_low=0, fb_high=0, oc=0, has_fb=false, has_oc=false) %}
+    {% for row in state.results %}
+        {% set item = row.collection_item %}
+        {% if row.fastbuy_match and row.fastbuy_match.product %}
+            {% set p = row.fastbuy_match.product %}
+            {% set ns.has_fb = true %}
+            {% set ns.fb_low = ns.fb_low + p.price_low * item.quantity %}
+            {% if p.price_high %}
+                {% set ns.fb_high = ns.fb_high + p.price_high * item.quantity %}
+            {% else %}
+                {% set ns.fb_high = ns.fb_high + p.price_low * item.quantity %}
+            {% endif %}
+        {% endif %}
+        {% if row.onechome_match and row.onechome_match.product %}
+            {% set p = row.onechome_match.product %}
+            {% set ns.has_oc = true %}
+            {% set ns.oc = ns.oc + p.price_low * item.quantity %}
+        {% endif %}
+    {% endfor %}
+
+    <div class="summary-grid">
+        {% if ns.has_fb %}
+        <div class="summary-item">
+            <span class="summary-label">Fastbuy 合計</span>
+            <span class="summary-value">
+                ¥{{ "{:,}".format(ns.fb_low) }}
+                {% if ns.fb_low != ns.fb_high %} ~ ¥{{ "{:,}".format(ns.fb_high) }}{% endif %}
+            </span>
+        </div>
+        {% endif %}
+        {% if ns.has_oc %}
+        <div class="summary-item">
+            <span class="summary-label">1-chome 合計</span>
+            <span class="summary-value">¥{{ "{:,}".format(ns.oc) }}</span>
+        </div>
+        {% endif %}
+    </div>
+</div>
+{% endblock %}
