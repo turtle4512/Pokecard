@@ -1,8 +1,17 @@
 """
-1-chome.com scraper — SPA site, Playwright browser automation.
+1-chome.com scraper — SPA site (Element Plus / Vue.js), Playwright browser automation.
 
 Strategy: search by Japanese keyword per product, parse rendered DOM.
-Selectors are tentative and may need F12 verification on first run.
+Selectors confirmed via Playwright DOM inspection.
+
+Card text structure:
+    【S＆V】クレイバースト BOX
+    JAN: 4521329346182
+    ポケモンカード
+    ※シュリンク付き、新品未開封
+    新品
+    ¥11,000
+    カートに入れる
 """
 
 import re
@@ -86,25 +95,15 @@ class OneChomeScraper(BaseScraper):
         return find_best_match(item, all_products, Site.ONECHOME)
 
     async def _perform_search(self, page: Page, keyword: str) -> list[ScrapedProduct]:
-        # Find search input
-        search_selectors = ONECHOME_SELECTORS["search_input"].split(", ")
-        search_input = None
+        search_input = page.locator(ONECHOME_SELECTORS["search_input"]).first
+        search_btn = page.locator(ONECHOME_SELECTORS["search_button"]).first
 
-        for selector in search_selectors:
-            try:
-                locator = page.locator(selector).first
-                if await locator.is_visible(timeout=3000):
-                    search_input = locator
-                    break
-            except Exception:
-                continue
-
-        if search_input is None:
-            raise RuntimeError("Could not find search input on 1-chome.com")
+        if not await search_input.is_visible(timeout=5000):
+            raise RuntimeError("Search input not visible")
 
         await search_input.fill("")
         await search_input.fill(keyword)
-        await search_input.press("Enter")
+        await search_btn.click()
 
         await page.wait_for_load_state("networkidle")
         await page.wait_for_timeout(2000)
@@ -114,51 +113,61 @@ class OneChomeScraper(BaseScraper):
     async def _parse_search_results(self, page: Page) -> list[ScrapedProduct]:
         products = []
 
-        card_selectors = ONECHOME_SELECTORS["product_card"].split(", ")
+        cards = page.locator(ONECHOME_SELECTORS["product_card"])
+        count = await cards.count()
+        logger.debug(f"  Found {count} commodity-item cards")
 
-        for selector in card_selectors:
-            cards = page.locator(selector)
-            count = await cards.count()
-            if count > 0:
-                logger.debug(f"  Found {count} cards with selector '{selector}'")
-                for i in range(count):
-                    card = cards.nth(i)
-                    try:
-                        product = await self._parse_single_card(card)
-                        if product:
-                            products.append(product)
-                    except Exception as e:
-                        logger.debug(f"  Failed to parse card {i}: {e}")
-                if products:
-                    return products
+        for i in range(count):
+            card = cards.nth(i)
+            try:
+                product = await self._parse_single_card(card)
+                if product:
+                    products.append(product)
+            except Exception as e:
+                logger.debug(f"  Failed to parse card {i}: {e}")
 
-        # Fallback: parse from page text
-        return await self._parse_from_page_text(page)
+        return products
 
     async def _parse_single_card(self, card) -> ScrapedProduct | None:
+        """
+        Parse card inner text. Expected format:
+            【S＆V】クレイバースト BOX
+            JAN: 4521329346182
+            ポケモンカード
+            ※シュリンク付き、新品未開封
+            新品
+            ¥11,000
+            カートに入れる
+        """
         text = await card.inner_text()
         if not text.strip():
             return None
 
         lines = [line.strip() for line in text.split("\n") if line.strip()]
+
+        # Product name: first line with 【 prefix or substantial length
         name = None
         for line in lines:
-            if len(line) > 3 and "カート" not in line:
+            if "【" in line or (len(line) > 5 and "カート" not in line and "JAN" not in line
+                               and "¥" not in line and "※" not in line):
                 name = line
                 break
 
         if not name:
             return None
 
+        # Price: ¥XX,XXX
         price_match = re.search(ONECHOME_PRICE_PATTERN, text)
         if not price_match:
             return None
 
         price = int(price_match.group(1).replace(",", ""))
 
-        jan_match = re.search(r"(?:JAN|jan)[:\s]*(\d{13})", text)
+        # JAN code
+        jan_match = re.search(r"JAN[:\s]*(\d{13})", text)
         jan_code = jan_match.group(1) if jan_match else None
 
+        # Condition
         condition = "新品" if "新品" in text else ("中古" if "中古" in text else None)
 
         return ScrapedProduct(
@@ -168,28 +177,3 @@ class OneChomeScraper(BaseScraper):
             jan_code=jan_code,
             condition=condition,
         )
-
-    async def _parse_from_page_text(self, page: Page) -> list[ScrapedProduct]:
-        """Fallback: extract from raw page text when card selectors fail."""
-        logger.debug("Falling back to full-page text parsing")
-        products = []
-
-        try:
-            text = await page.inner_text("body")
-        except Exception:
-            return products
-
-        lines = text.split("\n")
-        for i, line in enumerate(lines):
-            if "【" in line and ("BOX" in line or "セット" in line):
-                context = "\n".join(lines[max(0, i - 2):i + 5])
-                price_match = re.search(ONECHOME_PRICE_PATTERN, context)
-                if price_match:
-                    price = int(price_match.group(1).replace(",", ""))
-                    products.append(ScrapedProduct(
-                        site=Site.ONECHOME,
-                        name=line.strip(),
-                        price_low=price,
-                    ))
-
-        return products

@@ -29,12 +29,12 @@ ONECHOME_SEARCH_DELAY = (3.0, 6.0)
 ONECHOME_SEARCH_TIMEOUT = 15000
 ONECHOME_PRICE_PATTERN = r"[￥¥]\s*(\d{1,3}(?:,\d{3})*)"
 
+# Confirmed via Playwright DOM inspection (Element Plus / Vue.js)
 ONECHOME_SELECTORS = {
-    "search_input": "input[type='search'], input[type='text'][placeholder*='検索'], input[name*='search']",
-    "search_button": "button[type='submit'], button:has-text('検索'), [class*='search'] button",
-    "product_card": ".product-card, .goods-item, [class*='product']",
-    "product_name": ".product-name, .goods-title",
-    "price": ".price, [class*='price']",
+    "search_input": "input.el-input__inner[placeholder*='商品名']",
+    "search_button": "button.search-btn",
+    "product_card": ".commodity-item",
+    "product_name": ".commodity-content .title",
 }
 
 # ── Anti-scraping ──

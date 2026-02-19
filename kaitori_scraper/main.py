@@ -106,8 +106,7 @@ async def main() -> None:
 
 
 def entry() -> None:
-    if sys.platform == "win32":
-        asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
+    # Use default ProactorEventLoop on Windows (required by Playwright)
     asyncio.run(main())
 
 
