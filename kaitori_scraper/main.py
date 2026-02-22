@@ -78,21 +78,29 @@ async def main() -> None:
     fastbuy_results = []
     onechome_results = []
 
-    # Scrape fastbuy
-    if not args.onechome_only:
+    run_fastbuy = not args.onechome_only
+    run_onechome = not args.fastbuy_only
+
+    async def _scrape_fastbuy():
         logger.info("=" * 40)
         logger.info("Starting fastbuy.jp scrape...")
         logger.info("=" * 40)
-        scraper = FastbuyScraper()
-        fastbuy_results = await scraper.scrape(items)
+        return await FastbuyScraper().scrape(items)
 
-    # Scrape 1-chome
-    if not args.fastbuy_only:
+    async def _scrape_onechome():
         logger.info("=" * 40)
         logger.info("Starting 1-chome.com scrape...")
         logger.info("=" * 40)
-        scraper = OneChomeScraper()
-        onechome_results = await scraper.scrape(items)
+        return await OneChomeScraper().scrape(items)
+
+    if run_fastbuy and run_onechome:
+        fastbuy_results, onechome_results = await asyncio.gather(
+            _scrape_fastbuy(), _scrape_onechome()
+        )
+    elif run_fastbuy:
+        fastbuy_results = await _scrape_fastbuy()
+    elif run_onechome:
+        onechome_results = await _scrape_onechome()
 
     # Compare and report
     comparison = compare_results(items, fastbuy_results, onechome_results)

@@ -123,20 +123,21 @@ async def _run_scrape(mode: str) -> None:
         fastbuy_results = []
         onechome_results = []
 
-        if mode in ("fastbuy", "both"):
-            _update(phase="Scraping fastbuy.jp...")
-            scraper = FastbuyScraper()
-            fastbuy_results = await scraper.scrape(items)
-            if mode == "fastbuy":
-                _update(progress=0.9)
-            else:
-                _update(progress=0.3)
-
-        if mode in ("onechome", "both"):
-            _update(phase="Scraping 1-chome.com...")
-            scraper = OneChomeScraper()
-            onechome_results = await scraper.scrape(items)
+        if mode == "both":
+            _update(phase="Scraping both sites in parallel...")
+            fastbuy_results, onechome_results = await asyncio.gather(
+                FastbuyScraper().scrape(items),
+                OneChomeScraper().scrape(items),
+            )
             _update(progress=0.95)
+        elif mode == "fastbuy":
+            _update(phase="Scraping fastbuy.jp...")
+            fastbuy_results = await FastbuyScraper().scrape(items)
+            _update(progress=0.9)
+        elif mode == "onechome":
+            _update(phase="Scraping 1-chome.com...")
+            onechome_results = await OneChomeScraper().scrape(items)
+            _update(progress=0.9)
 
         _update(phase="Comparing results...")
         comparison = compare_results(items, fastbuy_results, onechome_results)

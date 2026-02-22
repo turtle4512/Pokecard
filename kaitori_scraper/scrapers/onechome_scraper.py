@@ -2,6 +2,7 @@
 1-chome.com scraper — SPA site (Element Plus / Vue.js), Playwright browser automation.
 
 Strategy: search by Japanese keyword per product, parse rendered DOM.
+Uses multiple browser tabs for parallel searching to improve speed.
 Selectors confirmed via Playwright DOM inspection.
 
 Card text structure:
@@ -14,6 +15,7 @@ Card text structure:
     カートに入れる
 """
 
+import asyncio
 import re
 import logging
 from playwright.async_api import async_playwright, Page
@@ -26,6 +28,7 @@ from kaitori_scraper.config.settings import (
     ONECHOME_SEARCH_DELAY,
     ONECHOME_PRICE_PATTERN,
     ONECHOME_SELECTORS,
+    ONECHOME_CONCURRENT_TABS,
     random_user_agent,
     DEFAULT_HEADERS,
 )
@@ -37,7 +40,7 @@ class OneChomeScraper(BaseScraper):
     site = Site.ONECHOME
 
     async def scrape(self, items: list[CollectionItem]) -> list[MatchResult]:
-        results = []
+        num_tabs = min(ONECHOME_CONCURRENT_TABS, len(items))
 
         async with async_playwright() as p:
             browser = await p.chromium.launch(headless=True)
@@ -46,26 +49,58 @@ class OneChomeScraper(BaseScraper):
                 locale="ja-JP",
                 extra_http_headers=DEFAULT_HEADERS,
             )
-            page = await context.new_page()
 
-            await page.goto(ONECHOME_BASE_URL, wait_until="networkidle")
-            logger.info("Loaded 1-chome.com homepage")
+            # Split items into chunks for each tab
+            chunks = [[] for _ in range(num_tabs)]
+            for i, item in enumerate(items):
+                chunks[i % num_tabs].append((i, item))
 
-            for item in items:
-                match = await self._search_item(page, item)
-                results.append(match)
+            # Create pages and navigate to homepage in parallel
+            pages = []
+            for _ in range(num_tabs):
+                page = await context.new_page()
+                pages.append(page)
 
-                if match.product:
-                    logger.info(
-                        f"  [{item.id}] {item.name_jp} -> {match.product.name} "
-                        f"(score={match.score:.2f}, ¥{match.product.price_low:,})"
-                    )
-                else:
-                    logger.warning(f"  [{item.id}] {item.name_jp} -> NO MATCH")
+            await asyncio.gather(*(
+                page.goto(ONECHOME_BASE_URL, wait_until="networkidle")
+                for page in pages
+            ))
+            logger.info(f"Loaded 1-chome.com homepage on {num_tabs} tabs")
 
-                await self._delay(ONECHOME_SEARCH_DELAY)
+            # Run tab workers in parallel
+            chunk_results = await asyncio.gather(*(
+                self._tab_worker(pages[tab_idx], chunks[tab_idx], tab_idx)
+                for tab_idx in range(num_tabs)
+            ))
 
             await browser.close()
+
+        # Merge results back in original item order
+        indexed_results: dict[int, MatchResult] = {}
+        for results in chunk_results:
+            indexed_results.update(results)
+
+        return [indexed_results[i] for i in range(len(items))]
+
+    async def _tab_worker(
+        self, page: Page, indexed_items: list[tuple[int, CollectionItem]], tab_id: int
+    ) -> dict[int, MatchResult]:
+        """Process a chunk of items on a single browser tab."""
+        results: dict[int, MatchResult] = {}
+
+        for idx, item in indexed_items:
+            match = await self._search_item(page, item)
+            results[idx] = match
+
+            if match.product:
+                logger.info(
+                    f"  [{item.id}] {item.name_jp} -> {match.product.name} "
+                    f"(score={match.score:.2f}, ¥{match.product.price_low:,})"
+                )
+            else:
+                logger.warning(f"  [{item.id}] {item.name_jp} -> NO MATCH")
+
+            await self._delay(ONECHOME_SEARCH_DELAY)
 
         return results
 
@@ -105,8 +140,15 @@ class OneChomeScraper(BaseScraper):
         await search_input.fill(keyword)
         await search_btn.click()
 
-        await page.wait_for_load_state("networkidle")
-        await page.wait_for_timeout(2000)
+        await page.wait_for_load_state("domcontentloaded")
+        # Smart wait: wait for product cards to appear, or timeout quickly if none
+        try:
+            await page.locator(ONECHOME_SELECTORS["product_card"]).first.wait_for(
+                state="visible", timeout=3000
+            )
+        except Exception:
+            # No results appeared within 3s — likely no matches
+            pass
 
         return await self._parse_search_results(page)
 

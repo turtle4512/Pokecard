@@ -4,6 +4,7 @@ Fastbuy.jp scraper — SSR site, httpx + BeautifulSoup.
 Strategy: crawl all 7 category pages -> build product index -> fuzzy match.
 """
 
+import asyncio
 import re
 import logging
 import httpx
@@ -48,24 +49,28 @@ class FastbuyScraper(BaseScraper):
 
     async def _crawl_all_pages(self) -> list[ScrapedProduct]:
         all_products: list[ScrapedProduct] = []
-        referer = "https://fastbuy.jp/"
 
         async with httpx.AsyncClient(follow_redirects=True, timeout=30.0) as client:
-            for page in range(1, FASTBUY_TOTAL_PAGES + 1):
-                url = fastbuy_page_url(page)
-                logger.info(f"Crawling page {page}/{FASTBUY_TOTAL_PAGES}: {url}")
+            # Fetch all pages concurrently
+            urls = [fastbuy_page_url(page) for page in range(1, FASTBUY_TOTAL_PAGES + 1)]
+            logger.info(f"Crawling {FASTBUY_TOTAL_PAGES} pages concurrently...")
 
+            async def _fetch_one(page_num: int, url: str) -> list[ScrapedProduct]:
+                # Stagger requests slightly to avoid burst
+                await asyncio.sleep(0.2 * (page_num - 1))
                 response = await self._retry_operation(
-                    self._fetch_page, client, url, referer
+                    self._fetch_page, client, url, "https://fastbuy.jp/"
                 )
+                products = self._parse_page(response.text, page_num)
+                logger.info(f"  Page {page_num}: found {len(products)} products")
+                return products
 
-                products = self._parse_page(response.text, page)
+            results = await asyncio.gather(*(
+                _fetch_one(i + 1, url) for i, url in enumerate(urls)
+            ))
+
+            for products in results:
                 all_products.extend(products)
-                logger.info(f"  Page {page}: found {len(products)} products")
-
-                referer = url
-                if page < FASTBUY_TOTAL_PAGES:
-                    await self._delay(FASTBUY_REQUEST_DELAY)
 
         return all_products
 

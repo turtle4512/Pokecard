@@ -5,7 +5,7 @@ import random
 FASTBUY_BASE_URL = "https://fastbuy.jp/index/index/categorydetail"
 FASTBUY_CATEGORY_ID = 8
 FASTBUY_TOTAL_PAGES = 7
-FASTBUY_REQUEST_DELAY = (2.0, 4.0)
+FASTBUY_REQUEST_DELAY = (0.5, 1.0)
 
 FASTBUY_SELECTORS = {
     "product_card": "a[href*='goodsdetail']",
@@ -25,8 +25,9 @@ def fastbuy_page_url(page: int) -> str:
 # ── 1-chome.com ──
 
 ONECHOME_BASE_URL = "https://1-chome.com"
-ONECHOME_SEARCH_DELAY = (3.0, 6.0)
-ONECHOME_SEARCH_TIMEOUT = 15000
+ONECHOME_SEARCH_DELAY = (0.5, 1.0)
+ONECHOME_SEARCH_TIMEOUT = 10000
+ONECHOME_CONCURRENT_TABS = 6
 ONECHOME_PRICE_PATTERN = r"[￥¥]\s*(\d{1,3}(?:,\d{3})*)"
 
 # Confirmed via Playwright DOM inspection (Element Plus / Vue.js)

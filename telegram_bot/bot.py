@@ -9,10 +9,11 @@ Commands:
     /csv            - Send CSV report file
 """
 
+import asyncio
 import logging
 from datetime import datetime
 
-from telegram import Update
+from telegram import BotCommand, Update
 from telegram.ext import (
     Application,
     CommandHandler,
@@ -35,8 +36,19 @@ _last_csv: str | None = None
 _last_time: datetime | None = None
 
 
+async def _post_init(app: Application) -> None:
+    """Register command menu in Telegram UI."""
+    await app.bot.set_my_commands([
+        BotCommand("start", "使用说明を表示"),
+        BotCommand("scrape", "買取価格を爬取（both/fastbuy/onechome）"),
+        BotCommand("status", "実行状態を確認"),
+        BotCommand("results", "最新の比較結果を表示"),
+        BotCommand("csv", "CSVレポートを送信"),
+    ])
+
+
 def create_bot(token: str) -> Application:
-    app = Application.builder().token(token).build()
+    app = Application.builder().token(token).post_init(_post_init).build()
     app.add_handler(CommandHandler("start", _cmd_start))
     app.add_handler(CommandHandler("scrape", _cmd_scrape))
     app.add_handler(CommandHandler("status", _cmd_status))
@@ -132,15 +144,18 @@ async def _run_scrape(mode: str, msg) -> None:
     onechome_results = []
 
     try:
-        if mode in ("fastbuy", "both"):
+        if mode == "both":
+            await msg.edit_text("🔄 Scraping both sites in parallel...")
+            fastbuy_results, onechome_results = await asyncio.gather(
+                FastbuyScraper().scrape(items),
+                OneChomeScraper().scrape(items),
+            )
+        elif mode == "fastbuy":
             await msg.edit_text("🔄 Scraping fastbuy.jp...")
-            scraper = FastbuyScraper()
-            fastbuy_results = await scraper.scrape(items)
-
-        if mode in ("onechome", "both"):
+            fastbuy_results = await FastbuyScraper().scrape(items)
+        elif mode == "onechome":
             await msg.edit_text("🔄 Scraping 1-chome.com...")
-            scraper = OneChomeScraper()
-            onechome_results = await scraper.scrape(items)
+            onechome_results = await OneChomeScraper().scrape(items)
 
         await msg.edit_text("🔄 Comparing results...")
         comparison = compare_results(items, fastbuy_results, onechome_results)
